@@ -3,11 +3,12 @@
 from bs4 import BeautifulSoup
 from datetime import datetime
 from time import time
+import re
 import requests
 import xlsxwriter
 
 # secret
-url = 'http://bombayshop.com.ua/admin/'
+url = 'https://bombayshop.com.ua/admin/'
 username = raw_input('input Login:')
 password = raw_input('input password:')
 
@@ -15,6 +16,7 @@ start_execution = time()
 
 # starting session  !Necessary
 current_session = requests.Session()
+current_session.mount(url, requests.adapters.HTTPAdapter(max_retries=5))
 
 
 def getting_general_table_page_url(
@@ -43,11 +45,16 @@ def getting_general_table_page(general_table_page_url):
     return general_table_page
 
 
-def getting_all_general_pages_urls(general_table_page, general_table_page_url):
-    all_page_urls = [general_table_page_url]
+def getting_all_general_pages_urls(general_table_page):
+    all_page_urls = []
     pages_urls = general_table_page.find('div', {'class': 'pagination'})
+    common_part_of_url = '='.join(re.split(r'=', (pages_urls.find('a').get(
+        'href')))[:-1])
+    page_numbers = []
     for url_item in pages_urls.findAll('a'):
-        all_page_urls.append(url_item.get('href'))
+        page_numbers.append(int(re.split(r'=', (url_item.get('href')))[-1]))
+    for page_number in xrange(1, max(page_numbers) + 1):
+        all_page_urls.append(common_part_of_url + '=' + str(page_number))
     return all_page_urls
 
 
@@ -94,10 +101,13 @@ def filling_order_table(_full_table_page):
     orders = []
     for row in product_table_list:
         order = {'good': row.find('td').find('a').string,
-                 'size': row.find('td').find('small').string,
                  'manufacturer': row.findAll('td')[1].string,
                  'quantity': row.findAll('td')[2].string,
                  'price': row.findAll('td')[3].string}
+        try:
+            order['size'] = row.find('td').find('small').string
+        except Exception:
+            order['size'] = None
         orders.append(order)
     return orders
 
@@ -106,7 +116,7 @@ def creating_final_dictionary(id_links):
     final_dictionary = {}
     progress = float(0)
     for key, value in id_links.items():
-        print (progress / len(id_links) * 100)
+        print ((progress / len(id_links) * 100), key)
         final_dictionary[key] = create_summary_dictionary(
              value)
         progress += 1
@@ -136,31 +146,39 @@ def filling_xlsx(final_dictionary):
         worksheet.write(row, 5, value.get('order_date'))
         worksheet.write(row, 6, value.get('sum'))
         column = 7
-        # print value['summary_order_goods']
         goods = value['summary_order_goods']
         for good in goods:
             worksheet.write(row, column, u'Товар:')
             worksheet.write(row, column + 1, good.get('good'))
             worksheet.write(row, column + 2, good.get('size'))
-            worksheet.write(row, column + 5, u'Кількість:')
-            worksheet.write(row, column + 6, good.get('quantity'))
+            worksheet.write(row, column + 3, u'Кількість:')
+            worksheet.write(row, column + 4, good.get('quantity'))
             worksheet.write(row, column + 5, u'Ціна:')
-            worksheet.write(row, column + 8, good.get('price'))
-            column += 4
+            worksheet.write(row, column + 6, good.get('price'))
+            column += 7
         row += 1
     workbook.close()
 
 start_url = getting_general_table_page_url(url, username, password,
                                            current_session)
-
 first_general_page = getting_general_table_page(start_url)
 
 all_general_urls = getting_all_general_pages_urls(
-    first_general_page, start_url)
+    first_general_page)
 
 all_id_links = getting_id_link_dictionary(all_general_urls)
-cutted_id_links = {2436: all_id_links[2436], 2435: all_id_links[2435]}
 
-filling_xlsx(creating_final_dictionary(cutted_id_links))
+filling_xlsx(creating_final_dictionary(all_id_links))
+#
+# workbook = xlsxwriter.Workbook(
+#         'test{}.xlsx'.format(datetime.now().strftime("%Y-%m-%d")))
+# worksheet = workbook.add_worksheet()
+# row = 0
+# for key in all_general_urls:
+#     worksheet.write(row, 0, key)
+#     #worksheet.write(row, 1, value)
+#     row += 1
+# workbook.close()
 
 print ('Execution finished in {} sec.'.format(time() - start_execution))
+
