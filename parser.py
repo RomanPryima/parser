@@ -3,38 +3,46 @@
 from bs4 import BeautifulSoup
 from datetime import datetime
 from time import time
+from urlparse import urlparse, parse_qs
+import gc
 import re
 import requests
 import xlsxwriter
 
 # secret
-url = 'https://bombayshop.com.ua/admin/'
+url = 'http://bombayshop.com.ua/admin/index.php'
 username = raw_input('input Login:')
 password = raw_input('input password:')
 
 start_execution = time()
 
 # starting session  !Necessary
-current_session = requests.Session()
-current_session.mount(url, requests.adapters.HTTPAdapter(max_retries=5))
 
 
-def getting_general_table_page_url(
-        site_url, site_username, site_password, session):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'
-    }
-    main_page_response = session.post(site_url, {
-        'username': site_username,
-        'password': site_password,
-        'headers': headers
-    })
+class Session(requests.Session()):
+    """
 
-    main_page = BeautifulSoup(main_page_response.text.encode(
-        'utf-8'), "html.parser")
+    """
+    def __init__(self, site_url, site_username, site_password):
+        self.mount(site_url, requests.adapters.HTTPAdapter(max_retries=5))
+        self.token = self.getting_session_token(
+            site_url, site_username, site_password)
 
-    return main_page.find('li', id='sale').find(
-        'a', text=u'Замовлення').get('href')
+    def getting_session_token(self, site_url, site_username, site_password):
+        headers = {
+            'User-Agent':
+                'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'
+        }
+        main_page_response = self.post(site_url, dict(username=site_username,
+                                                      password=site_password,
+                                                      headers=headers))
+        return parse_qs(urlparse(main_page_response.url).query).get('token')[0]
+
+
+def url_merge(site_url, id_number, session_token):
+    print session_token
+    return '{}?route=sale/order/info&order_id={}&token={}'.format(
+        site_url, id_number, session_token)
 
 
 def getting_general_table_page(general_table_page_url):
@@ -72,7 +80,14 @@ def getting_id_link_dictionary(all_page_urls):
 
 
 def create_summary_dictionary(order_url):
-    full_table_page = current_session.post(order_url).text
+    try:
+        full_table_page = current_session.post(order_url).text
+    except Exception:
+        new_session = starting_session()
+        full_table_page = starting_session().post(order_url, timeout=(
+            3, 30)).text
+
+
     table = BeautifulSoup(
         full_table_page.encode('utf-8'), 'html.parser').findAll(
         'table', {'class': 'form'})
@@ -91,6 +106,7 @@ def create_summary_dictionary(order_url):
         'td', text=u'Усього:').next_sibling.next_sibling.string
     summary_dictionary['summary_order_goods'] = filling_order_table(
         full_table_page)
+    gc.collect()
     return summary_dictionary
 
 
@@ -159,16 +175,18 @@ def filling_xlsx(final_dictionary):
         row += 1
     workbook.close()
 
-start_url = getting_general_table_page_url(url, username, password,
-                                           current_session)
-first_general_page = getting_general_table_page(start_url)
+current_session = Session(url, username, password)
 
-all_general_urls = getting_all_general_pages_urls(
-    first_general_page)
+print current_session.token
 
-all_id_links = getting_id_link_dictionary(all_general_urls)
-
-filling_xlsx(creating_final_dictionary(all_id_links))
+# first_general_page = getting_general_table_page(start_url)
+#
+# all_general_urls = getting_all_general_pages_urls(
+#     first_general_page)
+#
+# all_id_links = getting_id_link_dictionary(all_general_urls)
+#
+# filling_xlsx(creating_final_dictionary(all_id_links))
 #
 # workbook = xlsxwriter.Workbook(
 #         'test{}.xlsx'.format(datetime.now().strftime("%Y-%m-%d")))
@@ -179,6 +197,10 @@ filling_xlsx(creating_final_dictionary(all_id_links))
 #     #worksheet.write(row, 1, value)
 #     row += 1
 # workbook.close()
+
+#print start_url
+
+
 
 print ('Execution finished in {} sec.'.format(time() - start_execution))
 
