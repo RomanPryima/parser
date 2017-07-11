@@ -3,46 +3,36 @@
 from bs4 import BeautifulSoup
 from datetime import datetime
 from time import time
-from urlparse import urlparse, parse_qs
-import gc
-import re
 import requests
 import xlsxwriter
 
 # secret
-url = 'http://bombayshop.com.ua/admin/index.php'
+url = 'http://bombayshop.com.ua/admin/'
 username = raw_input('input Login:')
 password = raw_input('input password:')
 
 start_execution = time()
 
 # starting session  !Necessary
+current_session = requests.Session()
 
 
-class Session(requests.Session()):
-    """
+def getting_general_table_page_url(
+        site_url, site_username, site_password, session):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'
+    }
+    main_page_response = session.post(site_url, {
+        'username': site_username,
+        'password': site_password,
+        'headers': headers
+    })
 
-    """
-    def __init__(self, site_url, site_username, site_password):
-        self.mount(site_url, requests.adapters.HTTPAdapter(max_retries=5))
-        self.token = self.getting_session_token(
-            site_url, site_username, site_password)
+    main_page = BeautifulSoup(main_page_response.text.encode(
+        'utf-8'), "html.parser")
 
-    def getting_session_token(self, site_url, site_username, site_password):
-        headers = {
-            'User-Agent':
-                'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'
-        }
-        main_page_response = self.post(site_url, dict(username=site_username,
-                                                      password=site_password,
-                                                      headers=headers))
-        return parse_qs(urlparse(main_page_response.url).query).get('token')[0]
-
-
-def url_merge(site_url, id_number, session_token):
-    print session_token
-    return '{}?route=sale/order/info&order_id={}&token={}'.format(
-        site_url, id_number, session_token)
+    return main_page.find('li', id='sale').find(
+        'a', text=u'Замовлення').get('href')
 
 
 def getting_general_table_page(general_table_page_url):
@@ -53,16 +43,11 @@ def getting_general_table_page(general_table_page_url):
     return general_table_page
 
 
-def getting_all_general_pages_urls(general_table_page):
-    all_page_urls = []
+def getting_all_general_pages_urls(general_table_page, general_table_page_url):
+    all_page_urls = [general_table_page_url]
     pages_urls = general_table_page.find('div', {'class': 'pagination'})
-    common_part_of_url = '='.join(re.split(r'=', (pages_urls.find('a').get(
-        'href')))[:-1])
-    page_numbers = []
     for url_item in pages_urls.findAll('a'):
-        page_numbers.append(int(re.split(r'=', (url_item.get('href')))[-1]))
-    for page_number in xrange(1, max(page_numbers) + 1):
-        all_page_urls.append(common_part_of_url + '=' + str(page_number))
+        all_page_urls.append(url_item.get('href'))
     return all_page_urls
 
 
@@ -80,14 +65,7 @@ def getting_id_link_dictionary(all_page_urls):
 
 
 def create_summary_dictionary(order_url):
-    try:
-        full_table_page = current_session.post(order_url).text
-    except Exception:
-        new_session = starting_session()
-        full_table_page = starting_session().post(order_url, timeout=(
-            3, 30)).text
-
-
+    full_table_page = current_session.post(order_url).text
     table = BeautifulSoup(
         full_table_page.encode('utf-8'), 'html.parser').findAll(
         'table', {'class': 'form'})
@@ -106,7 +84,6 @@ def create_summary_dictionary(order_url):
         'td', text=u'Усього:').next_sibling.next_sibling.string
     summary_dictionary['summary_order_goods'] = filling_order_table(
         full_table_page)
-    gc.collect()
     return summary_dictionary
 
 
@@ -117,13 +94,10 @@ def filling_order_table(_full_table_page):
     orders = []
     for row in product_table_list:
         order = {'good': row.find('td').find('a').string,
+                 'size': row.find('td').find('small').string,
                  'manufacturer': row.findAll('td')[1].string,
                  'quantity': row.findAll('td')[2].string,
                  'price': row.findAll('td')[3].string}
-        try:
-            order['size'] = row.find('td').find('small').string
-        except Exception:
-            order['size'] = None
         orders.append(order)
     return orders
 
@@ -132,7 +106,7 @@ def creating_final_dictionary(id_links):
     final_dictionary = {}
     progress = float(0)
     for key, value in id_links.items():
-        print ((progress / len(id_links) * 100), key)
+        print (progress / len(id_links) * 100)
         final_dictionary[key] = create_summary_dictionary(
              value)
         progress += 1
@@ -162,45 +136,31 @@ def filling_xlsx(final_dictionary):
         worksheet.write(row, 5, value.get('order_date'))
         worksheet.write(row, 6, value.get('sum'))
         column = 7
+        # print value['summary_order_goods']
         goods = value['summary_order_goods']
         for good in goods:
             worksheet.write(row, column, u'Товар:')
             worksheet.write(row, column + 1, good.get('good'))
             worksheet.write(row, column + 2, good.get('size'))
-            worksheet.write(row, column + 3, u'Кількість:')
-            worksheet.write(row, column + 4, good.get('quantity'))
+            worksheet.write(row, column + 5, u'Кількість:')
+            worksheet.write(row, column + 6, good.get('quantity'))
             worksheet.write(row, column + 5, u'Ціна:')
-            worksheet.write(row, column + 6, good.get('price'))
-            column += 7
+            worksheet.write(row, column + 8, good.get('price'))
+            column += 4
         row += 1
     workbook.close()
 
-current_session = Session(url, username, password)
+start_url = getting_general_table_page_url(url, username, password,
+                                           current_session)
 
-print current_session.token
+first_general_page = getting_general_table_page(start_url)
 
-# first_general_page = getting_general_table_page(start_url)
-#
-# all_general_urls = getting_all_general_pages_urls(
-#     first_general_page)
-#
-# all_id_links = getting_id_link_dictionary(all_general_urls)
-#
-# filling_xlsx(creating_final_dictionary(all_id_links))
-#
-# workbook = xlsxwriter.Workbook(
-#         'test{}.xlsx'.format(datetime.now().strftime("%Y-%m-%d")))
-# worksheet = workbook.add_worksheet()
-# row = 0
-# for key in all_general_urls:
-#     worksheet.write(row, 0, key)
-#     #worksheet.write(row, 1, value)
-#     row += 1
-# workbook.close()
+all_general_urls = getting_all_general_pages_urls(
+    first_general_page, start_url)
 
-#print start_url
+all_id_links = getting_id_link_dictionary(all_general_urls)
+cutted_id_links = {2436: all_id_links[2436], 2435: all_id_links[2435]}
 
-
+filling_xlsx(creating_final_dictionary(cutted_id_links))
 
 print ('Execution finished in {} sec.'.format(time() - start_execution))
-
