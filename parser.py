@@ -1,4 +1,24 @@
 # -*- coding: utf-8 -*-
+"""
+General description:
+The module is purposed for grabbing certain data from tables on different pages
+in the admin part of aimed site.
+First page with general table can be requested with route:"route=sale/order"
+There are two types of tables needed to be parsed:
+1. General tables wich contain general data of an orders. Only order id's to
+be grabbed from these tables. Route for these pages "route=sale/order",
+"&page=" and number of the page.
+2.Full tables page wich contain detailed data of an order can be reached with
+route "index.php?route=sale/order", "&order_id=" and numerical order id grabbed
+from the general tables. All necessary data is received from full tables.
+
+Module iterates a list with numbers of general tables pages,
+takes all order id's than iterates a list with order id's calling pages with
+full tables and grabbing data from the tables into one full data dictionary.
+
+When dictionary is completed module creates an .xlsx file where inserts data
+from the dictionary in certain order.
+"""
 
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -21,16 +41,25 @@ start_execution = time()
 
 
 class Session(requests.Session):
+    """Class inherited from requests.Session object and has additional methods
+    """
 
     def login(self, site_url, authentication_data):
-        self.logined_url = self.post(site_url, authentication_data).url
+        """Sends a request for getting response with a token from the server
+        creates session properties containing base url and url with token for
+        future usage"""
         self.base_url = site_url
+        self.logined_url = self.post(site_url, authentication_data).url
 
     def get_token(self):
+        """parses token from the response and creates session token property"""
         self.token = '&token=' + parse_qs(urlparse(
             self.logined_url).query).get('token')[0]
 
     def get_top_number_of_general_page(self):
+        """ sends request for the first page containing general table and grabs
+        the top number of pages containing general tables. Applies
+        top_page_number to the session"""
         route = 'index.php?route=sale/order'
         print (self.base_url + route + self.token)
         general_table_page_response = self.post(
@@ -45,22 +74,34 @@ class Session(requests.Session):
         self.top_page_number = max(page_numbers)
 
     def get_id_list(self):
+        """Iterates a list up to top_page_number, calling pages with general
+        tables and grabs all order id's into a list with all orders id's
+        :return a list with all orders numbers.
+        """
         route = 'index.php?route=sale/order'
         page = '&page='
-        id_list = []
+        _id_list = []
         for page_number in xrange(self.top_page_number):
             table_page = BeautifulSoup(self.post(
                 self.base_url + route + self.token + page + str(
-                    page_number+1)).text.encode('utf-8'), "html.parser")
+                    page_number + 1)).text.encode('utf-8'), "html.parser")
             table_body = table_page.find('table', {'class': 'list'}).find(
                 'tbody')
             for row in table_body.findAll('tr'):
                 if row.find('input').get('value') != '':
-                    id_list.append(int(row.find('input').get('value')))
-        return id_list
+                    _id_list.append(int(row.find('input').get('value')))
+        return _id_list
 
 
 def create_summary_dictionary(session, order_id):
+    """
+    Requests a page with full table, using session and order id.
+    Calls filling_order_table, wich returns detailed data of ordered goods.
+    Grabs necessary data into the summary dictionary.
+    :param session: Session object
+    :param order_id: int - number of desired order.
+    :return: summarized dictionary with full data about the order
+    """
     route = 'index.php?route=sale/order/info'
     order = '&order_id='
     order_url = session.base_url + route + session.token + order + str(
@@ -106,12 +147,19 @@ def filling_order_table(full_table_page):
     return orders
 
 
-def creating_final_dictionary(session, id_links):
+def creating_final_dictionary(session, _id_list):
+    """
+     Using session, iterates a list of id's, calling create_summary_dictionary.
+    Joins results into one big final dictionary.
+    :param session: current session
+    :param _id_list: a list of all id's
+    :return: dict - final_dictionary
+    """
     final_dictionary = {}
     progress = float(0)
     used_id_links = []
-    for order_id in id_links:
-        print ((progress / len(id_links) * 100), order_id)
+    for order_id in _id_list:
+        print ((progress / len(_id_list) * 100), order_id)
         final_dictionary[order_id] = create_summary_dictionary(session,
                                                                order_id)
         used_id_links.append(order_id)
@@ -120,6 +168,12 @@ def creating_final_dictionary(session, id_links):
 
 
 def filling_xlsx(final_dictionary):
+    """
+    Creates an .xlxs file and fills it with data from final big dictionary.
+    :param final_dictionary: dict - completed dictionary with all necessary
+    data.
+    :return: filled .xlsx file.
+    """
     workbook = xlsxwriter.Workbook(
         'bombay {}.xlsx'.format(datetime.now().strftime("%Y-%m-%d")))
     worksheet = workbook.add_worksheet()
@@ -158,6 +212,17 @@ def filling_xlsx(final_dictionary):
 
 # starting session  !Necessary
 def start_session():
+    """
+    1.creates a new Session inherited by requests.Session object,
+    2.mounts adapters to session (I'm not sure if ti is necessary)
+    3. calls own method "login" and sends there site's url and authentication
+    data.
+    4. calls own method "get_token", wich returns a token string for adding it
+    to next requests.
+    5. calls own method "get_top_number_of_general_page, wich returns the
+    highest number for using in route for navigation in general tables pages.
+    :return: session with additional properties.
+    """
     session = Session()
     session.mount(url, requests.adapters.HTTPAdapter(max_retries=5))
     session.login(url, authentication)
@@ -177,4 +242,3 @@ full_dictionary = creating_final_dictionary(current_session, id_list)
 filling_xlsx(full_dictionary)
 
 print ('Execution finished in {} sec.'.format(time() - start_execution))
-
