@@ -20,49 +20,53 @@ authentication = dict(
 start_execution = time()
 
 
-def login(session, site_url, authentication_data):
-    return session.post(site_url, authentication_data).url
+class Session(requests.Session):
+
+    def login(self, site_url, authentication_data):
+        self.logined_url = self.post(site_url, authentication_data).url
+        self.base_url = site_url
+
+    def get_token(self):
+        self.token = '&token=' + parse_qs(urlparse(
+            self.logined_url).query).get('token')[0]
+
+    def get_top_number_of_general_page(self):
+        route = 'index.php?route=sale/order'
+        print (self.base_url + route + self.token)
+        general_table_page_response = self.post(
+            self.base_url + route + self.token)
+        general_table_page = BeautifulSoup(
+            general_table_page_response.text.encode('utf-8'), "html.parser")
+        pages_urls = general_table_page.find('div', {'class': 'pagination'})
+        page_numbers = []
+        for url_item in pages_urls.findAll('a'):
+            page_numbers.append(int(re.split(r'=', (
+                url_item.get('href')))[-1]))
+        self.top_page_number = max(page_numbers)
+
+    def get_id_list(self):
+        route = 'index.php?route=sale/order'
+        page = '&page='
+        id_list = []
+        for page_number in xrange(self.top_page_number):
+            table_page = BeautifulSoup(self.post(
+                self.base_url + route + self.token + page + str(
+                    page_number+1)).text.encode('utf-8'), "html.parser")
+            table_body = table_page.find('table', {'class': 'list'}).find(
+                'tbody')
+            for row in table_body.findAll('tr'):
+                if row.find('input').get('value') != '':
+                    id_list.append(int(row.find('input').get('value')))
+        return id_list
 
 
-def get_token(session_url):
-    return parse_qs(urlparse(session_url).query).get('token')[0]
-
-
-def get_top_number_of_general_page(session, base_url, token):
-    route = 'index.php?route=sale/order'
-    print (base_url + route + token)
-    general_table_page_response = session.post(
-        base_url + route + token)
-    general_table_page = BeautifulSoup(
-        general_table_page_response.text.encode('utf-8'), "html.parser")
-    pages_urls = general_table_page.find('div', {'class': 'pagination'})
-    page_numbers = []
-    for url_item in pages_urls.findAll('a'):
-        page_numbers.append(int(re.split(r'=', (url_item.get('href')))[-1]))
-    return max(page_numbers)
-
-
-def get_id_list(session, base_url, token, top_page_number):
-    route = 'index.php?route=sale/order'
-    page = '&page='
-    id_list = []
-    for page_number in xrange(top_page_number):
-        table_page = BeautifulSoup(session.post(
-            base_url + route + token + page + str(page_number+1)).text.encode(
-            'utf-8'), "html.parser")
-        table_body = table_page.find('table', {'class': 'list'}).find(
-            'tbody')
-        for row in table_body.findAll('tr'):
-            if row.find('input').get('value') != '':
-                id_list.append(int(row.find('input').get('value')))
-    return id_list
-
-
-def create_summary_dictionary(session, base_url, token, order_id,):
+def create_summary_dictionary(session, order_id):
     route = 'index.php?route=sale/order/info'
     order = '&order_id='
-    order_url = base_url + route + token + order + str(order_id)
-    full_table_page = session.post(order_url).text
+    order_url = session.base_url + route + session.token + order + str(
+        order_id)
+    full_table_page_response = session.post(order_url)
+    full_table_page = full_table_page_response.text
     table = BeautifulSoup(
         full_table_page.encode('utf-8'), 'html.parser').findAll(
         'table', {'class': 'form'})
@@ -102,14 +106,15 @@ def filling_order_table(full_table_page):
     return orders
 
 
-def creating_final_dictionary(session, base_url, token, id_links):
+def creating_final_dictionary(session, id_links):
     final_dictionary = {}
     progress = float(0)
+    used_id_links = []
     for order_id in id_links:
         print ((progress / len(id_links) * 100), order_id)
         final_dictionary[order_id] = create_summary_dictionary(session,
-                                                               base_url, token,
                                                                order_id)
+        used_id_links.append(order_id)
         progress += 1
     return final_dictionary
 
@@ -152,40 +157,24 @@ def filling_xlsx(final_dictionary):
 
 
 # starting session  !Necessary
-current_session = requests.Session()
-current_session.mount(url, requests.adapters.HTTPAdapter(max_retries=5))
-logined_url = login(current_session, url, authentication)
-print (logined_url)
-session_token = '&token=' + get_token(logined_url)
+def start_session():
+    session = Session()
+    session.mount(url, requests.adapters.HTTPAdapter(max_retries=5))
+    session.login(url, authentication)
+    session.get_token()
+    print (session.logined_url)
+    print session.token
+    session.get_top_number_of_general_page()
+    print session.top_page_number
+    return session
 
-top_page = get_top_number_of_general_page(current_session, url, session_token)
 
-id_list = get_id_list(current_session, url, session_token, top_page)
+current_session = start_session()
+id_list = current_session.get_id_list()
 
+full_dictionary = creating_final_dictionary(current_session, id_list)
 
-filling_xlsx(creating_final_dictionary(
-    current_session, url, session_token, id_list))
-
-# start_url = getting_general_table_page_url(url, username, password,
-#                                            current_session)
-# first_general_page = getting_general_table_page(start_url)
-#
-# all_general_urls = getting_all_general_pages_urls(
-#     first_general_page)
-#
-# all_id_links = getting_id_link_dictionary(all_general_urls)
-#
-# filling_xlsx(creating_final_dictionary(all_id_links))
-#
-# workbook = xlsxwriter.Workbook(
-#         'test{}.xlsx'.format(datetime.now().strftime("%Y-%m-%d")))
-# worksheet = workbook.add_worksheet()
-# row = 0
-# for key in all_general_urls:
-#     worksheet.write(row, 0, key)
-#     #worksheet.write(row, 1, value)
-#     row += 1
-# workbook.close()
+filling_xlsx(full_dictionary)
 
 print ('Execution finished in {} sec.'.format(time() - start_execution))
 
