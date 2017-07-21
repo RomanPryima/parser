@@ -168,7 +168,8 @@ def creating_final_dictionary(session, _id_list):
     """
     progress = float(0)
     for order_id in _id_list:
-        print ((progress / len(_id_list) * 100), order_id)
+        print ("Processed {} %. Processing order No. {}".format(
+            round((progress / len(_id_list) * 100), 2), order_id))
         create_summary_dictionary(session, order_id)
         progress += 1
 
@@ -239,9 +240,14 @@ def start_session():
     return session
 
 
-remove('temp.txt')
+try:
+    remove('temp.txt')
+except OSError:
+    pass
+
+
 current_session = start_session()
-id_list = sorted(current_session.get_id_list(), reverse=True)[:15]
+id_list = sorted(current_session.get_id_list(), reverse=True)
 creating_final_dictionary(current_session, id_list)
 filling_xlsx()
 remove('temp.txt')
