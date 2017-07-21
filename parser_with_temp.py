@@ -22,38 +22,20 @@ from the dictionary in certain order.
 
 from bs4 import BeautifulSoup
 from datetime import datetime
+from os import remove
 from time import time
-from urllib.parse import urlparse, parse_qs
+from urlparse import urlparse, parse_qs
+import ast
 import re
 import requests
 import xlsxwriter
-import gc
 
 
-def dump_garbage():
-    """
-    show us what's the garbage about
-    """
-
-    # force collection
-    print ("\nGARBAGE:")
-    gc.collect()
-
-    print ("\nGARBAGE OBJECTS:")
-    for x in gc.garbage:
-        s = str(x)
-        if len(s) > 80:
-            s = s[:80]
-        print (type(x), "\n  ", s)
-
-
-def namestr(obj, namespace):
-    return [name for name in namespace if namespace[name] is obj]
 
 # secret
 url = 'https://bombayshop.com.ua/admin/'
-username = input('input Login:')
-password = input('input password:')
+username = raw_input('input Login:')
+password = raw_input('input password:')
 headers = {'User-Agent':
                'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'}
 authentication = dict(
@@ -83,7 +65,6 @@ class Session(requests.Session):
         the top number of pages containing general tables. Applies
         top_page_number to the session"""
         route = 'index.php?route=sale/order'
-        print (self.base_url + route + self.token)
         general_table_page_response = self.post(
             self.base_url + route + self.token)
         general_table_page = BeautifulSoup(
@@ -116,7 +97,6 @@ class Session(requests.Session):
 
 
 def create_summary_dictionary(session, order_id):
-    # TODO: remake request thru a with statement.
     """
     Requests a page with full table, using session and order id.
     Calls filling_order_table, wich returns detailed data of ordered goods.
@@ -149,13 +129,19 @@ def create_summary_dictionary(session, order_id):
             'td', text=u'Усього:').next_sibling.next_sibling.string
         summary_dictionary['summary_order_goods'] = filling_order_table(
             full_table_page)
-
-    del table
-    del full_table_page
-    return summary_dictionary
+    indexed_dictionary = {}
+    indexed_dictionary[order_id] = summary_dictionary
+    with open('temp.txt', 'a') as temp:
+        temp.write(str(indexed_dictionary) + '\n')
 
 
 def filling_order_table(full_table_page):
+    """
+    Returns a list of dictionaries with all ordered goods and their properties
+    in certain order.
+    :param full_table_page:
+    :return: list of dictionaries with all ordered goods and their properties.
+    """
     product_table_list = BeautifulSoup(
         full_table_page.encode('utf-8'), 'html.parser').find(
         id='tab-product').find('tbody').findAll('tr')
@@ -167,7 +153,7 @@ def filling_order_table(full_table_page):
                  'price': row.findAll('td')[3].string}
         try:
             order['size'] = row.find('td').find('small').string
-        except Exception:
+        except AttributeError:
             order['size'] = None
         orders.append(order)
     return orders
@@ -179,25 +165,17 @@ def creating_final_dictionary(session, _id_list):
     Joins results into one big final dictionary.
     :param session: current session
     :param _id_list: a list of all id's
-    :return: dict - final_dictionary
     """
-    final_dictionary = {}
     progress = float(0)
-    used_id_links = []
     for order_id in _id_list:
         print ((progress / len(_id_list) * 100), order_id)
-        final_dictionary[order_id] = create_summary_dictionary(session,
-                                                               order_id)
-        used_id_links.append(order_id)
+        create_summary_dictionary(session, order_id)
         progress += 1
-    return final_dictionary
 
 
-def filling_xlsx(final_dictionary):
+def filling_xlsx():
     """
-    Creates an .xlxs file and fills it with data from final big dictionary.
-    :param final_dictionary: dict - completed dictionary with all necessary
-    data.
+    Creates an .xlxs file and fills it with data from temp file.
     :return: filled .xlsx file.
     """
     workbook = xlsxwriter.Workbook(
@@ -213,26 +191,30 @@ def filling_xlsx(final_dictionary):
     worksheet.write(0, 7, u'Замовлення')
 
     row = 1
-    for key, value in final_dictionary.items():
-        worksheet.write(row, 0, key)
-        worksheet.write(row, 1, value.get('buyer'))
-        worksheet.write(row, 2, value.get('email'))
-        worksheet.write(row, 3, value.get('phone'))
-        worksheet.write(row, 4, value.get('city'))
-        worksheet.write(row, 5, value.get('order_date'))
-        worksheet.write(row, 6, value.get('sum'))
-        column = 7
-        goods = value['summary_order_goods']
-        for good in goods:
-            worksheet.write(row, column, u'Товар:')
-            worksheet.write(row, column + 1, good.get('good'))
-            worksheet.write(row, column + 2, good.get('size'))
-            worksheet.write(row, column + 3, u'Кількість:')
-            worksheet.write(row, column + 4, good.get('quantity'))
-            worksheet.write(row, column + 5, u'Ціна:')
-            worksheet.write(row, column + 6, good.get('price'))
-            column += 7
-        row += 1
+    with open('temp.txt', 'r') as temp:
+        lines = [line.rstrip('\n') for line in temp]
+        for line in lines:
+            final_dictionary = ast.literal_eval(line)
+            for key, value in final_dictionary.items():
+                worksheet.write(row, 0, key)
+                worksheet.write(row, 1, value.get('buyer'))
+                worksheet.write(row, 2, value.get('email'))
+                worksheet.write(row, 3, value.get('phone'))
+                worksheet.write(row, 4, value.get('city'))
+                worksheet.write(row, 5, value.get('order_date'))
+                worksheet.write(row, 6, value.get('sum'))
+                column = 7
+                goods = value['summary_order_goods']
+                for good in goods:
+                    worksheet.write(row, column, u'Товар:')
+                    worksheet.write(row, column + 1, good.get('good'))
+                    worksheet.write(row, column + 2, good.get('size'))
+                    worksheet.write(row, column + 3, u'Кількість:')
+                    worksheet.write(row, column + 4, good.get('quantity'))
+                    worksheet.write(row, column + 5, u'Ціна:')
+                    worksheet.write(row, column + 6, good.get('price'))
+                    column += 7
+            row += 1
     workbook.close()
 
 
@@ -253,19 +235,15 @@ def start_session():
     session.mount(url, requests.adapters.HTTPAdapter(max_retries=5))
     session.login(url, authentication)
     session.get_token()
-    print (session.logined_url)
-    print (session.token)
     session.get_top_number_of_general_page()
     return session
 
 
+remove('temp.txt')
 current_session = start_session()
-id_list = sorted(current_session.get_id_list(),reverse=True)
-id_list = id_list[:750]
-
-full_dictionary = creating_final_dictionary(current_session, id_list)
-
-filling_xlsx(full_dictionary)
-
+id_list = sorted(current_session.get_id_list(), reverse=True)[:15]
+creating_final_dictionary(current_session, id_list)
+filling_xlsx()
+remove('temp.txt')
 
 print ('Execution finished in {} sec.'.format(time() - start_execution))
