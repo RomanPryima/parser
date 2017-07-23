@@ -28,20 +28,8 @@ from urlparse import urlparse, parse_qs
 import ast
 import re
 import requests
+import sys
 import xlsxwriter
-
-
-
-# secret
-url = 'https://bombayshop.com.ua/admin/'
-username = raw_input('input Login:')
-password = raw_input('input password:')
-headers = {'User-Agent':
-               'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'}
-authentication = dict(
-    username=username, password=password, headers=headers)
-
-start_execution = time()
 
 
 class Session(requests.Session):
@@ -52,13 +40,22 @@ class Session(requests.Session):
         """Sends a request for getting response with a token from the server
         creates session properties containing base url and url with token for
         future usage"""
-        self.base_url = site_url
-        self.logined_url = self.post(site_url, authentication_data).url
+        try:
+            self.base_url = site_url
+            self.logined_url = self.post(site_url, authentication_data).url
+        except requests.adapters.ConnectionError:
+            sys.exit(
+                'Connection issues. Check connection and try again')
+
 
     def get_token(self):
         """parses token from the response and creates session token property"""
-        self.token = '&token=' + parse_qs(urlparse(
-            self.logined_url).query).get('token')[0]
+        try:
+            self.token = '&token=' + parse_qs(urlparse(
+                self.logined_url).query).get('token')[0]
+        except TypeError:
+            sys.exit(
+                'Login issues. Please enter properly username and password.')
 
     def get_top_number_of_general_page(self):
         """ sends request for the first page containing general table and grabs
@@ -220,7 +217,7 @@ def filling_xlsx():
 
 
 # starting session  !Necessary
-def start_session():
+def start_session(url, authentication):
     """
     1.creates a new Session inherited by requests.Session object,
     2.mounts adapters to session (I'm not sure if ti is necessary)
@@ -240,16 +237,22 @@ def start_session():
     return session
 
 
-try:
+def run_parser(username, password):
+    print ('Start parsing')
+    url = 'https://bombayshop.com.ua/admin/'
+    headers = {'User-Agent':
+                   'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'}
+    authentication = dict(
+        username=username, password=password, headers=headers)
+
+    start_execution = time()
+    try:
+        remove('temp.txt')
+    except OSError:
+        pass
+    current_session = start_session(url, authentication)
+    id_list = sorted(current_session.get_id_list(), reverse=True)
+    creating_final_dictionary(current_session, id_list)
+    filling_xlsx()
     remove('temp.txt')
-except OSError:
-    pass
-
-
-current_session = start_session()
-id_list = sorted(current_session.get_id_list(), reverse=True)
-creating_final_dictionary(current_session, id_list)
-filling_xlsx()
-remove('temp.txt')
-
-print ('Execution finished in {} sec.'.format(time() - start_execution))
+    print ('Execution finished in {} sec.'.format(time() - start_execution))
