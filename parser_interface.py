@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
+"""
+GUI for parser.
+"""
 from Tkinter import *
+from multiprocessing import Process, Queue
+from sys import exit
 import parser_with_temp
 
 
@@ -40,15 +45,27 @@ class Scene(object):
         self.password.ent.grid(column=1, row=2)
         self.run_button = Button(
             self.frame.root, text=u'Start', font="Arial 18", bd=5)
-        self.run_button.bind('<Button-1>', self.start_parse)
-        self.run_button.grid(column=0, row=3, columnspan=2)
+        self.run_button.bind('<Button-1>',  self.start_parse)
+        self.run_button.grid(column=0, row=3, columnspan=1)
+        self.cancel_button = Button(
+            self.frame.root, text=u'Close', font="Arial 18", bd=5)
+        self.cancel_button.bind('<Button-1>', self.stop_parser)
+        self.cancel_button.grid(column=1, row=3, columnspan=1)
+        self.response = Label(self.frame.root, font='Arial 14', pady=20)
+        self.response.grid(column=0, columnspan=2, row=4)
         self.frame.root.mainloop()
 
+    def start_parse(self, *args):
+        q = Queue()
+        parser_process = Process(target=parser_with_temp.run_parser, args=(
+            self.username.value.get(), self.password.value.get()))
+        parser_process.start()
+        parser_process.join()
+        self.response['text'] = 'Finished'
 
-    def start_parse(self,*args):
-        parser_with_temp.run_parser(
-            self.username.value.get(), self.password.value.get())
+    @staticmethod
+    def stop_parser(self, *args):
+        exit()
 
 if __name__ == '__main__':
     run = Scene()
-
