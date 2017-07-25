@@ -42,11 +42,11 @@ class Session(requests.Session):
         future usage"""
         try:
             self.base_url = site_url
-            self.logined_url = self.post(site_url, authentication_data).url
+            self.logined_url = self.post(
+                self.base_url, authentication_data).url
         except requests.adapters.ConnectionError:
             sys.exit(
                 'Connection issues. Check connection and try again')
-
 
     def get_token(self):
         """parses token from the response and creates session token property"""

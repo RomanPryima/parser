@@ -56,7 +56,6 @@ class Scene(object):
         self.frame.root.mainloop()
 
     def start_parse(self, *args):
-        q = Queue()
         parser_process = Process(target=parser_with_temp.run_parser, args=(
             self.username.value.get(), self.password.value.get()))
         parser_process.start()
@@ -64,7 +63,7 @@ class Scene(object):
         self.response['text'] = 'Finished'
 
     @staticmethod
-    def stop_parser(self, *args):
+    def stop_parser(*args):
         exit()
 
 if __name__ == '__main__':
