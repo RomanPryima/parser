@@ -60,7 +60,7 @@ class Session(requests.Session):
     def get_top_number_of_general_page(self):
         """ sends request for the first page containing general table and grabs
         the top number of pages containing general tables. Applies
-        top_page_number to the session"""
+        last_page_number to the session"""
         route = 'index.php?route=sale/order'
         general_table_page_response = self.post(
             self.base_url + route + self.token)
@@ -71,25 +71,26 @@ class Session(requests.Session):
         for url_item in pages_urls.findAll('a'):
             page_numbers.append(int(re.split(r'=', (
                 url_item.get('href')))[-1]))
-        self.top_page_number = max(page_numbers)
+        self.last_page_number = max(page_numbers)
 
     def get_id_list(self):
-        """Iterates a list up to top_page_number, calling pages with general
+        """Iterates a list up to last_page_number, calling pages with general
         tables and grabs all order id's into a list with all orders id's
         :return a list with all orders numbers.
         """
         route = 'index.php?route=sale/order'
         page = '&page='
         _id_list = []
-        for page_number in range(self.top_page_number):
+        for page_number in range(self.last_page_number):
             table_page = BeautifulSoup(self.post(
                 self.base_url + route + self.token + page + str(
                     page_number + 1)).text.encode('utf-8'), "html.parser")
             table_body = table_page.find('table', {'class': 'list'}).find(
                 'tbody')
             for row in table_body.findAll('tr'):
-                if row.find('input').get('value') != '':
-                    _id_list.append(int(row.find('input').get('value')))
+                input_value = row.find('input').get('value')
+                if input_value:
+                    _id_list.append(int(input_value))
         return _id_list
 
 
@@ -163,7 +164,7 @@ def creating_final_dictionary(session, _id_list):
     :param session: current session
     :param _id_list: a list of all id's
     """
-    progress = float(0)
+    progress = 0.0
     for order_id in _id_list:
         print ("Processed {} %. Processing order No. {}".format(
             round((progress / len(_id_list) * 100), 2), order_id))
@@ -176,42 +177,34 @@ def filling_xlsx():
     Creates an .xlxs file and fills it with data from temp file.
     :return: filled .xlsx file.
     """
+    table_header = ['ID', u"Прізвище та ім'я", u'Електронна адреса',
+                    u'Номер телефону', u'Адреса доставки', u'Дата замовлення'
+                    u'Сума', u'Замовлення']
     workbook = xlsxwriter.Workbook(
         'bombay {}.xlsx'.format(datetime.now().strftime("%Y-%m-%d")))
     worksheet = workbook.add_worksheet()
-    worksheet.write(0, 0, 'ID')
-    worksheet.write(0, 1, u"Прізвище та ім'я")
-    worksheet.write(0, 2, u'Електронна адреса')
-    worksheet.write(0, 3, u'Номер телефону')
-    worksheet.write(0, 4, u'Адреса доставки')
-    worksheet.write(0, 5, u'Дата замовлення')
-    worksheet.write(0, 6, u'Сума')
-    worksheet.write(0, 7, u'Замовлення')
+    for column, value in enumerate(table_header):
+        worksheet.write(0, column, value)
 
     row = 1
     with open('temp.txt', 'r') as temp:
         lines = [line.rstrip('\n') for line in temp]
         for line in lines:
             final_dictionary = ast.literal_eval(line)
+
             for key, value in final_dictionary.items():
-                worksheet.write(row, 0, key)
-                worksheet.write(row, 1, value.get('buyer'))
-                worksheet.write(row, 2, value.get('email'))
-                worksheet.write(row, 3, value.get('phone'))
-                worksheet.write(row, 4, value.get('city'))
-                worksheet.write(row, 5, value.get('order_date'))
-                worksheet.write(row, 6, value.get('sum'))
-                column = 7
+                sheet_values = [key, value['buyer'], value['email'],
+                                value['phone'], value['city'],
+                                value['order_date'], value['sum']]
                 goods = value['summary_order_goods']
                 for good in goods:
-                    worksheet.write(row, column, u'Товар:')
-                    worksheet.write(row, column + 1, good.get('good'))
-                    worksheet.write(row, column + 2, good.get('size'))
-                    worksheet.write(row, column + 3, u'Кількість:')
-                    worksheet.write(row, column + 4, good.get('quantity'))
-                    worksheet.write(row, column + 5, u'Ціна:')
-                    worksheet.write(row, column + 6, good.get('price'))
-                    column += 7
+                    sheet_values.extend(
+                        [u'Товар', good.get('good'), good.get('size'),
+                         u'Кількість', good.get('quantity'), u'Ціна',
+                         good.get('price')[:-5]])
+
+            for column, value in enumerate(sheet_values):
+                worksheet.write(row, column, value)
             row += 1
     workbook.close()
 
