@@ -51,7 +51,7 @@ class Session(requests.Session):
     def get_token(self):
         """parses token from the response and creates session token property"""
         try:
-            self.token = '&token=' + parse_qs(urlparse(
+            self.token = parse_qs(urlparse(
                 self.logined_url).query).get('token')[0]
         except TypeError:
             sys.exit(
@@ -61,30 +61,35 @@ class Session(requests.Session):
         """ sends request for the first page containing general table and grabs
         the top number of pages containing general tables. Applies
         last_page_number to the session"""
-        route = 'index.php?route=sale/order'
-        general_table_page_response = self.post(
-            self.base_url + route + self.token)
+        params = (
+            ('route', 'sale/order'),
+            ('token', self.token),
+        )
+        general_table_page_response = self.get(
+            self.base_url, params=params)
         general_table_page = BeautifulSoup(
             general_table_page_response.text.encode('utf-8'), "html.parser")
-        pages_urls = general_table_page.find('div', {'class': 'pagination'})
-        page_numbers = []
-        for url_item in pages_urls.findAll('a'):
-            page_numbers.append(int(re.split(r'=', (
-                url_item.get('href')))[-1]))
-        self.last_page_number = max(page_numbers)
+        summary_pages = general_table_page.find(
+            'div', {'class': 'results'}).text
+        self.last_page_number = int(
+            re.search('\d+\)', summary_pages).group(0)[:-1])
 
     def get_id_list(self):
         """Iterates a list up to last_page_number, calling pages with general
         tables and grabs all order id's into a list with all orders id's
         :return a list with all orders numbers.
         """
-        route = 'index.php?route=sale/order'
-        page = '&page='
+
         _id_list = []
         for page_number in range(self.last_page_number):
-            table_page = BeautifulSoup(self.post(
-                self.base_url + route + self.token + page + str(
-                    page_number + 1)).text.encode('utf-8'), "html.parser")
+            params = (
+                ('route', 'sale/order'),
+                ('page', page_number + 1),
+                ('token', self.token),
+            )
+            table_page = BeautifulSoup(self.get(
+                self.base_url, params=params).text.encode(
+                'utf-8'), "html.parser")
             table_body = table_page.find('table', {'class': 'list'}).find(
                 'tbody')
             for row in table_body.findAll('tr'):
@@ -103,11 +108,14 @@ def create_summary_dictionary(session, order_id):
     :param order_id: int - number of desired order.
     :return: summarized dictionary with full data about the order
     """
-    route = 'index.php?route=sale/order/info'
-    order = '&order_id='
-    order_url = session.base_url + route + session.token + order + str(
-        order_id)
-    with session.post(order_url) as full_table_page_response:
+    params = (
+        ('route', 'sale/order/info'),
+        ('token', session.token),
+        ('order_id', order_id)
+    )
+
+    with session.get(
+            session.base_url, params=params) as full_table_page_response:
         full_table_page = full_table_page_response.text
         table = BeautifulSoup(
             full_table_page.encode('utf-8'), 'html.parser').findAll(
@@ -232,7 +240,7 @@ def start_session(url, authentication):
 
 def run_parser(username, password):
     print ('Start parsing')
-    url = 'https://bombayshop.com.ua/admin/'
+    url = 'https://bombayshop.com.ua/admin/index.php'
     headers = {'User-Agent':
                    'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'}
     authentication = dict(
@@ -244,7 +252,7 @@ def run_parser(username, password):
     except OSError:
         pass
     current_session = start_session(url, authentication)
-    id_list = sorted(current_session.get_id_list(), reverse=True)
+    id_list = sorted(current_session.get_id_list(), reverse=True)[:10]
     creating_final_dictionary(current_session, id_list)
     filling_xlsx()
     remove('temp.txt')
