@@ -82,6 +82,8 @@ class Session(requests.Session):
 
         _id_list = []
         for page_number in range(self.last_page_number):
+            print ("Getting list of id's. {} % completed".format(
+                page_number / float(self.last_page_number) * 100))
             params = (
                 ('route', 'sale/order'),
                 ('page', page_number + 1),
@@ -118,8 +120,8 @@ def create_summary_dictionary(session, order_id):
             session.base_url, params=params) as full_table_page_response:
         full_table_page = full_table_page_response.text
         table = BeautifulSoup(
-            full_table_page.encode('utf-8'), 'html.parser').findAll(
-            'table', {'class': 'form'})
+            full_table_page.encode('utf-8'), 'html.parser').select(
+            'table .form')
         summary_dictionary = dict()
         summary_dictionary['buyer'] = table[0].find(
             'td', text=u'Покупець').next_sibling.next_sibling.string
@@ -149,11 +151,11 @@ def filling_order_table(full_table_page):
     :return: list of dictionaries with all ordered goods and their properties.
     """
     product_table_list = BeautifulSoup(
-        full_table_page.encode('utf-8'), 'html.parser').find(
-        id='tab-product').find('tbody').findAll('tr')
+        full_table_page.encode('utf-8'), 'html.parser').select(
+        '#tab-product tbody tr')
     orders = []
     for row in product_table_list:
-        order = {'good': row.find('td').find('a').string,
+        order = {'good': row.find('td a').string,
                  'manufacturer': row.findAll('td')[1].string,
                  'quantity': row.findAll('td')[2].string,
                  'price': row.findAll('td')[3].string}
