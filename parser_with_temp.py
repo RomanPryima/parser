@@ -83,21 +83,20 @@ class Session(requests.Session):
         _id_list = []
         for page_number in range(self.last_page_number):
             print ("Getting list of id's. {} % completed".format(
-                page_number / float(self.last_page_number) * 100))
+                page_number*100 / self.last_page_number))
             params = (
                 ('route', 'sale/order'),
                 ('page', page_number + 1),
-                ('token', self.token),
+                ('token', self.token)
             )
             table_page = BeautifulSoup(self.get(
                 self.base_url, params=params).text.encode(
                 'utf-8'), "html.parser")
-            table_body = table_page.find('table', {'class': 'list'}).find(
-                'tbody')
-            for row in table_body.findAll('tr'):
-                input_value = row.find('input').get('value')
-                if input_value:
-                    _id_list.append(int(input_value))
+            raw_inputs = table_page.select(
+                # 'table.list tbody tr:not(.filter) input')
+                'table.list tbody tr input[type="checkbox"]')
+            for element in raw_inputs:
+                _id_list.append(int(element.attrs.get('value')))
         return _id_list
 
 
@@ -121,7 +120,7 @@ def create_summary_dictionary(session, order_id):
         full_table_page = full_table_page_response.text
         table = BeautifulSoup(
             full_table_page.encode('utf-8'), 'html.parser').select(
-            'table .form')
+            'table.form')
         summary_dictionary = dict()
         summary_dictionary['buyer'] = table[0].find(
             'td', text=u'Покупець').next_sibling.next_sibling.string
@@ -151,16 +150,17 @@ def filling_order_table(full_table_page):
     :return: list of dictionaries with all ordered goods and their properties.
     """
     product_table_list = BeautifulSoup(
-        full_table_page.encode('utf-8'), 'html.parser').select(
-        '#tab-product tbody tr')
+        full_table_page.encode('utf-8'), 'html.parser').select_one(
+        '#tab-product tbody').findAll('tr')
     orders = []
     for row in product_table_list:
-        order = {'good': row.find('td a').string,
-                 'manufacturer': row.findAll('td')[1].string,
-                 'quantity': row.findAll('td')[2].string,
-                 'price': row.findAll('td')[3].string}
+        product_data = row.findAll('td')
+        order = {'good': row.find('a').string,
+                 'manufacturer': product_data[1].string,
+                 'quantity': product_data[2].string,
+                 'price': product_data[3].string}
         try:
-            order['size'] = row.find('td').find('small').string
+            order['size'] = row.find('small').string
         except AttributeError:
             order['size'] = None
         orders.append(order)
@@ -174,10 +174,10 @@ def creating_final_dictionary(session, _id_list):
     :param session: current session
     :param _id_list: a list of all id's
     """
-    progress = 0.0
+    progress = 0
     for order_id in _id_list:
         print ("Processed {} %. Processing order No. {}".format(
-            round((progress / len(_id_list) * 100), 2), order_id))
+            round((progress *100 / len(_id_list)), 2), order_id))
         create_summary_dictionary(session, order_id)
         progress += 1
 
@@ -249,13 +249,11 @@ def run_parser(username, password):
         username=username, password=password, headers=headers)
 
     start_execution = time()
-    try:
-        remove('temp.txt')
-    except OSError:
-        pass
+    open('temp.txt', 'w').close()
     current_session = start_session(url, authentication)
-    id_list = sorted(current_session.get_id_list(), reverse=True)[:10]
+    id_list = sorted(current_session.get_id_list(), reverse=True)
     creating_final_dictionary(current_session, id_list)
     filling_xlsx()
     remove('temp.txt')
-    print ('Execution finished in {} sec.'.format(time() - start_execution))
+    print ('Execution finished in {} sec.'.format(round(
+            time() - start_execution), 2))
