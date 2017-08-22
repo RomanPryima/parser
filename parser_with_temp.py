@@ -75,8 +75,8 @@ class Session(requests.Session):
             re.search('\d+\)', summary_pages).group(0)[:-1])
 
     def get_id_list(self):
-        """Iterates a list up to last_page_number, calling pages with general
-        tables and grabs all order id's into a list with all orders id's
+        """Iterates a range up to last_page_number, calling pages with general
+        tables and grabs all order id's into a list.
         :return a list with all orders numbers.
         """
 
@@ -104,7 +104,8 @@ def create_summary_dictionary(session, order_id):
     """
     Requests a page with full table, using session and order id.
     Calls filling_order_table, wich returns detailed data of ordered goods.
-    Grabs necessary data into the summary dictionary.
+    Grabs necessary data into the temporary .txt file, where each order is a
+    separate row.
     :param session: Session object
     :param order_id: int - number of desired order.
     :return: summarized dictionary with full data about the order
@@ -170,11 +171,10 @@ def filling_order_table(full_table_page):
 def creating_final_dictionary(session, _id_list):
     """
      Using session, iterates a list of id's, calling create_summary_dictionary.
-    Joins results into one big final dictionary.
     :param session: current session
     :param _id_list: a list of all id's
     """
-    progress = 0
+    progress = float(0)
     for order_id in _id_list:
         print ("Processed {} %. Processing order No. {}".format(
             round((progress *100 / len(_id_list)), 2), order_id))
