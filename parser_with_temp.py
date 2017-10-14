@@ -19,18 +19,21 @@ full tables and grabbing data from the tables into one full data dictionary.
 When dictionary is completed module creates an .xlsx file where inserts data
 from the dictionary in certain order.
 """
-
+import ast
+import logging
+import re
+import requests
+import sys
+import xlsxwriter
 from bs4 import BeautifulSoup
 from datetime import datetime
 from os import remove
 from time import time
 from urlparse import urlparse, parse_qs
-import ast
-import re
-import requests
-import sys
-import xlsxwriter
 
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+logger = logging.getLogger()
 
 class Session(requests.Session):
     """Class inherited from requests.Session object and has additional methods
@@ -82,7 +85,7 @@ class Session(requests.Session):
 
         _id_list = []
         for page_number in range(self.last_page_number):
-            print ("Getting list of id's. {} % completed".format(
+            logger.info ("Getting list of id's. {} % completed".format(
                 page_number*100 / self.last_page_number))
             params = (
                 ('route', 'sale/order'),
@@ -93,7 +96,6 @@ class Session(requests.Session):
                 self.base_url, params=params).text.encode(
                 'utf-8'), "html.parser")
             raw_inputs = table_page.select(
-                # 'table.list tbody tr:not(.filter) input')
                 'table.list tbody tr input[type="checkbox"]')
             for element in raw_inputs:
                 _id_list.append(int(element.attrs.get('value')))
@@ -176,7 +178,7 @@ def creating_final_dictionary(session, _id_list):
     """
     progress = float(0)
     for order_id in _id_list:
-        print ("Processed {} %. Processing order No. {}".format(
+        logger.info ("Processed {} %. Processing order No. {}".format(
             round((progress *100 / len(_id_list)), 2), order_id))
         create_summary_dictionary(session, order_id)
         progress += 1
@@ -241,7 +243,7 @@ def start_session(url, authentication):
 
 
 def run_parser(username, password):
-    print ('Start parsing')
+    logger.info ('Start parsing')
     url = 'https://bombayshop.com.ua/admin/index.php'
     headers = {'User-Agent':
                    'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'}
@@ -249,11 +251,11 @@ def run_parser(username, password):
         username=username, password=password, headers=headers)
 
     start_execution = time()
-    open('temp.txt', 'w').close()
+    with open('temp.txt', 'w'): pass
     current_session = start_session(url, authentication)
     id_list = sorted(current_session.get_id_list(), reverse=True)
     creating_final_dictionary(current_session, id_list)
     filling_xlsx()
     remove('temp.txt')
-    print ('Execution finished in {} sec.'.format(round(
+    logger.info ('Execution finished in {} sec.'.format(round(
             time() - start_execution), 2))
