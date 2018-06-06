@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 GUI for parser.
 """
-from Tkinter import *
+from tkinter import *
 from multiprocessing import Process, Queue
 from sys import exit
 import parser_with_temp

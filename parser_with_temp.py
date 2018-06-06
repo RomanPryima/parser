@@ -26,13 +26,14 @@ import requests
 import sys
 import xlsxwriter
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from os import remove
 from time import time
-from urlparse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs
 
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+logging.basicConfig(level=logging.INFO,format='%(asctime)s %(thread)d %(message)s')
 logger = logging.getLogger()
 
 class Session(requests.Session):
@@ -74,31 +75,28 @@ class Session(requests.Session):
             general_table_page_response.text.encode('utf-8'), "html.parser")
         summary_pages = general_table_page.find(
             'div', {'class': 'results'}).text
-        self.last_page_number = int(
-            re.search('\d+\)', summary_pages).group(0)[:-1])
+        return int(re.search('\d+\)', summary_pages).group(0)[:-1])
 
-    def get_id_list(self):
+    def get_id_list(self, page_number, num_pages):
         """Iterates a range up to last_page_number, calling pages with general
         tables and grabs all order id's into a list.
         :return a list with all orders numbers.
         """
 
         _id_list = []
-        for page_number in range(self.last_page_number):
-            logger.info ("Getting list of id's. {} % completed".format(
-                page_number*100 / self.last_page_number))
-            params = (
-                ('route', 'sale/order'),
-                ('page', page_number + 1),
-                ('token', self.token)
-            )
-            table_page = BeautifulSoup(self.get(
-                self.base_url, params=params).text.encode(
-                'utf-8'), "html.parser")
-            raw_inputs = table_page.select(
-                'table.list tbody tr input[type="checkbox"]')
-            for element in raw_inputs:
-                _id_list.append(int(element.attrs.get('value')))
+        logger.info ("Getting list of id's. {} % completed".format(
+            round(page_number*100 / num_pages, 2)))
+        params = (
+            ('route', 'sale/order'),
+            ('page', page_number + 1),
+            ('token', self.token)
+        )
+        table_page = BeautifulSoup(self.get(
+            self.base_url, params=params).text.encode(
+            'utf-8'), "html.parser")
+        raw_inputs = table_page.select('table.list tbody tr input[type="checkbox"]')
+        for element in raw_inputs:
+            _id_list.append(int(element.attrs.get('value')))
         return _id_list
 
 
@@ -112,6 +110,7 @@ def create_summary_dictionary(session, order_id):
     :param order_id: int - number of desired order.
     :return: summarized dictionary with full data about the order
     """
+    logging.info("worker with id {} started".format(order_id))
     params = (
         ('route', 'sale/order/info'),
         ('token', session.token),
@@ -141,8 +140,7 @@ def create_summary_dictionary(session, order_id):
             full_table_page)
     indexed_dictionary = {}
     indexed_dictionary[order_id] = summary_dictionary
-    with open('temp.txt', 'a') as temp:
-        temp.write(str(indexed_dictionary) + '\n')
+    return indexed_dictionary
 
 
 def filling_order_table(full_table_page):
@@ -170,24 +168,9 @@ def filling_order_table(full_table_page):
     return orders
 
 
-def creating_final_dictionary(session, _id_list):
-    """
-     Using session, iterates a list of id's, calling create_summary_dictionary.
-    :param session: current session
-    :param _id_list: a list of all id's
-    """
-    progress = float(0)
-    for order_id in _id_list:
-        logger.info ("Processed {} %. Processing order No. {}".format(
-            round((progress *100 / len(_id_list)), 2), order_id))
-        create_summary_dictionary(session, order_id)
-        progress += 1
-
-
 def filling_xlsx():
     """
     Creates an .xlxs file and fills it with data from temp file.
-    :return: filled .xlsx file.
     """
     table_header = ['ID', u"Прізвище та ім'я", u'Електронна адреса',
                     u'Номер телефону', u'Адреса доставки', u'Дата замовлення'
@@ -200,21 +183,20 @@ def filling_xlsx():
 
     row = 1
     with open('temp.txt', 'r') as temp:
-        lines = [line.rstrip('\n') for line in temp]
-        for line in lines:
-            final_dictionary = ast.literal_eval(line)
-
-            for key, value in final_dictionary.items():
-                sheet_values = [key, value['buyer'], value['email'],
-                                value['phone'], value['city'],
-                                value['order_date'], value['sum']]
-                goods = value['summary_order_goods']
-                for good in goods:
-                    sheet_values.extend(
-                        [u'Товар', good.get('good'), good.get('size'),
-                         u'Кількість', good.get('quantity'), u'Ціна',
-                         good.get('price')[:-5]])
-
+        final_dicts_list = [ast.literal_eval(line.rstrip('\n')) for line in temp]
+        final_dicts_dict = {[*order_dict.keys()][0]: [*order_dict.values()][0] for order_dict in final_dicts_list}
+        keys_list = sorted([dict_key for dict_key in final_dicts_dict.keys()], reverse=True)
+        for order_key in keys_list:
+            value = final_dicts_dict[order_key]
+            sheet_values = [order_key, value['buyer'], value['email'],
+                            value['phone'], value['city'],
+                            value['order_date'], value['sum']]
+            goods = value['summary_order_goods']
+            for good in goods:
+                sheet_values.extend(
+                    [u'Товар', good.get('good'), good.get('size'),
+                     u'Кількість', good.get('quantity'), u'Ціна',
+                     good.get('price')[:-5]])
             for column, value in enumerate(sheet_values):
                 worksheet.write(row, column, value)
             row += 1
@@ -235,7 +217,7 @@ def start_session(url, authentication):
     :return: session with additional properties.
     """
     session = Session()
-    session.mount(url, requests.adapters.HTTPAdapter(max_retries=5))
+    session.mount(url, requests.adapters.HTTPAdapter(max_retries=5, pool_connections=100, pool_maxsize=100))
     session.login(url, authentication)
     session.get_token()
     session.get_top_number_of_general_page()
@@ -247,15 +229,34 @@ def run_parser(username, password):
     url = 'https://bombayshop.com.ua/admin/index.php'
     headers = {'User-Agent':
                    'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'}
-    authentication = dict(
-        username=username, password=password, headers=headers)
+    authentication = {
+        'username': username,
+        'password': password,
+        'headers': headers,
+    }
 
     start_execution = time()
     with open('temp.txt', 'w'): pass
     current_session = start_session(url, authentication)
-    id_list = sorted(current_session.get_id_list(), reverse=True)
-    creating_final_dictionary(current_session, id_list)
+    max_page = current_session.get_top_number_of_general_page()
+    order_ids = []
+    with ThreadPoolExecutor(max_workers=25) as executor:
+        futures = [executor.submit(current_session.get_id_list, *(page_num, max_page)) for page_num in range(max_page)]
+    for future in as_completed(futures):
+        order_ids.extend(future.result())
+    id_list = sorted(order_ids, reverse=True)
+    with ThreadPoolExecutor(max_workers=25) as executor:
+        futures = [executor.submit(create_summary_dictionary, *(current_session, page_id)) for page_id in id_list]
+    for future in as_completed(futures):
+        with open('temp.txt', 'a') as temp:
+            temp.write(str(future.result()) + '\n')
     filling_xlsx()
     remove('temp.txt')
     logger.info ('Execution finished in {} sec.'.format(round(
             time() - start_execution), 2))
+
+
+if __name__ == '__main__':
+    username = input('username:  ')
+    password = input('password:  ')
+    run_parser(username, password)
