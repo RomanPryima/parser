@@ -1,0 +1,262 @@
+# -*- coding: utf-8 -*-
+"""
+General description:
+The module is purposed for grabbing certain data from tables on different pages
+in the admin part of aimed site.
+First page with general table can be requested with route:"route=sale/order"
+There are two types of tables needed to be parsed:
+1. General tables wich contain general data of an orders. Only order id's to
+be grabbed from these tables. Route for these pages "route=sale/order",
+"&page=" and number of the page.
+2.Full tables page wich contain detailed data of an order can be reached with
+route "index.php?route=sale/order", "&order_id=" and numerical order id grabbed
+from the general tables. All necessary data is received from full tables.
+
+Module iterates a list with numbers of general tables pages,
+takes all order id's than iterates a list with order id's calling pages with
+full tables and grabbing data from the tables into one full data dictionary.
+
+When dictionary is completed module creates an .xlsx file where inserts data
+from the dictionary in certain order.
+"""
+import ast
+import logging
+import re
+import requests
+import sys
+import xlsxwriter
+from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from os import remove
+from time import time
+from urllib.parse import urlparse, parse_qs
+
+
+logging.basicConfig(level=logging.INFO,format='%(asctime)s %(thread)d %(message)s')
+logger = logging.getLogger()
+
+class Session(requests.Session):
+    """Class inherited from requests.Session object and has additional methods
+    """
+
+    def login(self, site_url, authentication_data):
+        """Sends a request for getting response with a token from the server
+        creates session properties containing base url and url with token for
+        future usage"""
+        try:
+            self.base_url = site_url
+            self.logined_url = self.post(
+                self.base_url, authentication_data).url
+        except requests.adapters.ConnectionError:
+            sys.exit(
+                'Connection issues. Check connection and try again')
+
+    def get_token(self):
+        """parses token from the response and creates session token property"""
+        try:
+            self.token = parse_qs(urlparse(
+                self.logined_url).query).get('token')[0]
+        except TypeError:
+            sys.exit(
+                'Login issues. Please enter properly username and password.')
+
+    def get_top_number_of_general_page(self):
+        """ sends request for the first page containing general table and grabs
+        the top number of pages containing general tables. Applies
+        last_page_number to the session"""
+        params = (
+            ('route', 'sale/order'),
+            ('token', self.token),
+        )
+        general_table_page_response = self.get(
+            self.base_url, params=params)
+        general_table_page = BeautifulSoup(
+            general_table_page_response.text.encode('utf-8'), "html.parser")
+        summary_pages = general_table_page.find(
+            'div', {'class': 'results'}).text
+        return int(re.search('\d+\)', summary_pages).group(0)[:-1])
+
+    def get_id_list(self, page_number, num_pages):
+        """Iterates a range up to last_page_number, calling pages with general
+        tables and grabs all order id's into a list.
+        :return a list with all orders numbers.
+        """
+
+        _id_list = []
+        logger.info ("Getting list of id's. {} % completed".format(
+            round(page_number*100 / num_pages, 2)))
+        params = (
+            ('route', 'sale/order'),
+            ('page', page_number + 1),
+            ('token', self.token)
+        )
+        table_page = BeautifulSoup(self.get(
+            self.base_url, params=params).text.encode(
+            'utf-8'), "html.parser")
+        raw_inputs = table_page.select('table.list tbody tr input[type="checkbox"]')
+        for element in raw_inputs:
+            _id_list.append(int(element.attrs.get('value')))
+        return _id_list
+
+
+def create_summary_dictionary(session, order_id):
+    """
+    Requests a page with full table, using session and order id.
+    Calls filling_order_table, wich returns detailed data of ordered goods.
+    Grabs necessary data into the temporary .txt file, where each order is a
+    separate row.
+    :param session: Session object
+    :param order_id: int - number of desired order.
+    :return: summarized dictionary with full data about the order
+    """
+    logging.info("worker with id {} started".format(order_id))
+    params = (
+        ('route', 'sale/order/info'),
+        ('token', session.token),
+        ('order_id', order_id)
+    )
+
+    with session.get(
+            session.base_url, params=params) as full_table_page_response:
+        full_table_page = full_table_page_response.text
+        table = BeautifulSoup(
+            full_table_page.encode('utf-8'), 'html.parser').select(
+            'table.form')
+        summary_dictionary = dict()
+        summary_dictionary['buyer'] = table[0].find(
+            'td', text=u'Покупець').next_sibling.next_sibling.string
+        summary_dictionary['email'] = table[0].find(
+            'td', text=u'E-mail:').next_sibling.next_sibling.string
+        summary_dictionary['phone'] = table[0].find(
+            'td', text=u'Телефон').next_sibling.next_sibling.string
+        summary_dictionary['city'] = table[1].find(
+            'td', text=u'Місто:').next_sibling.next_sibling.string
+        summary_dictionary['order_date'] = table[0].find(
+            'td', text=u'Дата замовлення:').next_sibling.next_sibling.string
+        summary_dictionary['sum'] = table[0].find(
+            'td', text=u'Усього:').next_sibling.next_sibling.string
+        summary_dictionary['summary_order_goods'] = filling_order_table(
+            full_table_page)
+    indexed_dictionary = {}
+    indexed_dictionary[order_id] = summary_dictionary
+    return indexed_dictionary
+
+
+def filling_order_table(full_table_page):
+    """
+    Returns a list of dictionaries with all ordered goods and their properties
+    in certain order.
+    :param full_table_page:
+    :return: list of dictionaries with all ordered goods and their properties.
+    """
+    product_table_list = BeautifulSoup(
+        full_table_page.encode('utf-8'), 'html.parser').select_one(
+        '#tab-product tbody').findAll('tr')
+    orders = []
+    for row in product_table_list:
+        product_data = row.findAll('td')
+        order = {'good': row.find('a').string,
+                 'manufacturer': product_data[1].string,
+                 'quantity': product_data[2].string,
+                 'price': product_data[3].string}
+        try:
+            order['size'] = row.find('small').string
+        except AttributeError:
+            order['size'] = None
+        orders.append(order)
+    return orders
+
+
+def filling_xlsx():
+    """
+    Creates an .xlxs file and fills it with data from temp file.
+    """
+    table_header = ['ID', u"Прізвище та ім'я", u'Електронна адреса',
+                    u'Номер телефону', u'Адреса доставки', u'Дата замовлення'
+                    u'Сума', u'Замовлення']
+    workbook = xlsxwriter.Workbook(
+        'bombay {}.xlsx'.format(datetime.now().strftime("%Y-%m-%d")))
+    worksheet = workbook.add_worksheet()
+    for column, value in enumerate(table_header):
+        worksheet.write(0, column, value)
+
+    row = 1
+    with open('temp.txt', 'r') as temp:
+        final_dicts_list = [ast.literal_eval(line.rstrip('\n')) for line in temp]
+        final_dicts_dict = {[*order_dict.keys()][0]: [*order_dict.values()][0] for order_dict in final_dicts_list}
+        keys_list = sorted([dict_key for dict_key in final_dicts_dict.keys()], reverse=True)
+        for order_key in keys_list:
+            value = final_dicts_dict[order_key]
+            sheet_values = [order_key, value['buyer'], value['email'],
+                            value['phone'], value['city'],
+                            value['order_date'], value['sum']]
+            goods = value['summary_order_goods']
+            for good in goods:
+                sheet_values.extend(
+                    [u'Товар', good.get('good'), good.get('size'),
+                     u'Кількість', good.get('quantity'), u'Ціна',
+                     good.get('price')[:-5]])
+            for column, value in enumerate(sheet_values):
+                worksheet.write(row, column, value)
+            row += 1
+    workbook.close()
+
+
+# starting session  !Necessary
+def start_session(url, authentication):
+    """
+    1.creates a new Session inherited by requests.Session object,
+    2.mounts adapters to session (I'm not sure if ti is necessary)
+    3. calls own method "login" and sends there site's url and authentication
+    data.
+    4. calls own method "get_token", wich returns a token string for adding it
+    to next requests.
+    5. calls own method "get_top_number_of_general_page, wich returns the
+    highest number for using in route for navigation in general tables pages.
+    :return: session with additional properties.
+    """
+    session = Session()
+    session.mount(url, requests.adapters.HTTPAdapter(max_retries=5, pool_connections=100, pool_maxsize=100))
+    session.login(url, authentication)
+    session.get_token()
+    session.get_top_number_of_general_page()
+    return session
+
+
+def run_parser(username, password):
+    logger.info ('Start parsing')
+    url = 'https://bombayshop.com.ua/admin/index.php'
+    headers = {'User-Agent':
+                   'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9a3pre)'}
+    authentication = {
+        'username': username,
+        'password': password,
+        'headers': headers,
+    }
+
+    start_execution = time()
+    with open('temp.txt', 'w'): pass
+    current_session = start_session(url, authentication)
+    max_page = current_session.get_top_number_of_general_page()
+    order_ids = []
+    with ThreadPoolExecutor(max_workers=25) as executor:
+        futures = [executor.submit(current_session.get_id_list, *(page_num, max_page)) for page_num in range(max_page)]
+    for future in as_completed(futures):
+        order_ids.extend(future.result())
+    id_list = sorted(order_ids, reverse=True)
+    with ThreadPoolExecutor(max_workers=25) as executor:
+        futures = [executor.submit(create_summary_dictionary, *(current_session, page_id)) for page_id in id_list]
+    for future in as_completed(futures):
+        with open('temp.txt', 'a') as temp:
+            temp.write(str(future.result()) + '\n')
+    filling_xlsx()
+    remove('temp.txt')
+    logger.info ('Execution finished in {} sec.'.format(round(
+            time() - start_execution), 2))
+
+
+if __name__ == '__main__':
+    username = input('username:  ')
+    password = input('password:  ')
+    run_parser(username, password)
